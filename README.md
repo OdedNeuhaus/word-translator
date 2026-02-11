@@ -1,4 +1,4 @@
-# Word Translator (Hebrew)
+# The Hebrew Translator - Chrome Extension
 
 A lightweight Chrome extension that translates selected text into Hebrew.
 
@@ -7,7 +7,7 @@ A lightweight Chrome extension that translates selected text into Hebrew.
 2. Open `chrome://extensions/`
 3. Enable **Developer mode**
 4. Click **Load unpacked**
-5. Select the `word-translator` folder
+5. Select the `hebrew-translator` folder
 
 ## Use
 Highlight a word, phrase, or sentence on any webpage, then click **Translate to Hebrew**.
