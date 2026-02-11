@@ -19,7 +19,7 @@ function showBubble(x, y, text) {
     left: `${x}px`,
     top: `${y}px`,
     zIndex: 2147483647,
-    maxWidth: "360px",
+    maxWidth: "420px",
     padding: "10px 12px",
     fontSize: "14px",
     lineHeight: "1.35",
@@ -29,38 +29,108 @@ function showBubble(x, y, text) {
     boxShadow: "0 2px 14px rgba(0,0,0,0.18)",
     direction: "rtl",
     whiteSpace: "pre-wrap",
-    pointerEvents: "auto"
+    pointerEvents: "auto",
   });
 
   document.body.appendChild(bubbleEl);
 }
 
-function getSelectedText() {
-  const sel = window.getSelection();
-  const text = sel?.toString()?.trim() || "";
-  if (!text) return "";
-
-  // single word only (remove if you want phrases)
-  if (text.split(/\s+/).length !== 1) return "";
-
-  // strip punctuation around selection
-  return text.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+function normalizeSpaces(s) {
+  return (s || "").replace(/\s+/g, " ").trim();
 }
 
-function placeNearSelection() {
+// Remove invisible chars + strip punctuation around word
+function normalizeWord(s) {
+  if (!s) return "";
+  let t = s.trim();
+  t = t.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  t = t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+  return t;
+}
+
+function isSingleWord(rawSelection) {
+  const t = normalizeSpaces(rawSelection);
+  if (!t) return false;
+  if (t.split(" ").length !== 1) return false;
+  const w = normalizeWord(t);
+  return /^[\p{L}\p{N}][\p{L}\p{N}'’\-]*$/u.test(w);
+}
+
+function closestBlockElement(node) {
+  let el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  while (el) {
+    const tag = el.tagName ? el.tagName.toLowerCase() : "";
+    if (["h1","h2","h3","h4","h5","h6","p","li","blockquote","td","th","article","section"].includes(tag)) {
+      return el;
+    }
+    const cs = window.getComputedStyle(el);
+    if (cs && (cs.display === "block" || cs.display === "list-item")) return el;
+    el = el.parentElement;
+  }
+  return document.body;
+}
+
+// For single word: take 2 words left + 2 words right (works across spans via ranges)
+function buildContext2Left2Right(range, cleanedWord) {
+  const block = closestBlockElement(range.commonAncestorContainer);
+
+  const blockRange = document.createRange();
+  blockRange.selectNodeContents(block);
+
+  const leftRange = document.createRange();
+  leftRange.setStart(blockRange.startContainer, blockRange.startOffset);
+  leftRange.setEnd(range.startContainer, range.startOffset);
+
+  const rightRange = document.createRange();
+  rightRange.setStart(range.endContainer, range.endOffset);
+  rightRange.setEnd(blockRange.endContainer, blockRange.endOffset);
+
+  const leftText = normalizeSpaces(leftRange.toString());
+  const rightText = normalizeSpaces(rightRange.toString());
+
+  const leftWords = leftText ? leftText.split(" ").filter(Boolean) : [];
+  const rightWords = rightText ? rightText.split(" ").filter(Boolean) : [];
+
+  const left2 = leftWords.slice(Math.max(0, leftWords.length - 2)).join(" ");
+  const right2 = rightWords.slice(0, 2).join(" ");
+
+  return { left: left2, right: right2 };
+}
+
+function getSelectionInfo() {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return null;
 
   const range = sel.getRangeAt(0);
-  const rect = range.getBoundingClientRect();
+  const raw = sel.toString();
 
+  const trimmed = raw ? raw.trim() : "";
+  if (!trimmed) return null;
+
+  // Single word => context-aware
+  if (isSingleWord(trimmed)) {
+    const word = normalizeWord(trimmed);
+    if (!word) return null;
+
+    const ctx = buildContext2Left2Right(range, word);
+    return { mode: "word", word, ctx, range };
+  }
+
+  // Multi word / sentence => translate selection directly
+  // Keep it close to what the user highlighted (only trim ends).
+  // Do not normalize punctuation; Google handles it.
+  const text = trimmed;
+  return { mode: "selection", text, range };
+}
+
+function placeNearRange(range) {
+  const rect = range.getBoundingClientRect();
   const x = Math.round(rect.left + window.scrollX);
   const y = Math.round(rect.bottom + window.scrollY);
-
   return { x, y };
 }
 
-function createButton(x, y, selectedText) {
+function createButton(x, y, info) {
   cleanup();
 
   buttonEl = document.createElement("button");
@@ -80,7 +150,7 @@ function createButton(x, y, selectedText) {
     cursor: "pointer",
     boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
     userSelect: "none",
-    pointerEvents: "auto"
+    pointerEvents: "auto",
   });
 
   buttonEl.addEventListener(
@@ -91,22 +161,29 @@ function createButton(x, y, selectedText) {
 
       showBubble(x, y + 34, "Translating...");
 
-      chrome.runtime.sendMessage(
-        { type: "TRANSLATE_HE", text: selectedText },
-        (resp) => {
-          if (chrome.runtime.lastError) {
-            showBubble(x, y + 34, `Extension error: ${chrome.runtime.lastError.message}`);
-            return;
-          }
+      let payload;
+      if (info.mode === "word") {
+        payload = {
+          type: "TRANSLATE_HE_CONTEXT5",
+          word: info.word,
+          left: info.ctx?.left || "",
+          right: info.ctx?.right || "",
+        };
+      } else {
+        payload = { type: "TRANSLATE_HE_SELECTION", text: info.text };
+      }
 
-          if (!resp?.ok) {
-            showBubble(x, y + 34, `Error: ${resp?.error || "unknown"}`);
-            return;
-          }
-
-          showBubble(x, y + 34, resp.translated);
+      chrome.runtime.sendMessage(payload, (resp) => {
+        if (chrome.runtime.lastError) {
+          showBubble(x, y + 34, `Extension error: ${chrome.runtime.lastError.message}`);
+          return;
         }
-      );
+        if (!resp?.ok) {
+          showBubble(x, y + 34, `Error: ${resp?.error || "unknown"}`);
+          return;
+        }
+        showBubble(x, y + 34, resp.translated);
+      });
     },
     true
   );
@@ -117,16 +194,13 @@ function createButton(x, y, selectedText) {
 document.addEventListener(
   "mouseup",
   () => {
-    const text = getSelectedText();
-    if (!text) {
+    const info = getSelectionInfo();
+    if (!info) {
       cleanup();
       return;
     }
-
-    const pos = placeNearSelection();
-    if (!pos) return;
-
-    createButton(pos.x, pos.y, text);
+    const pos = placeNearRange(info.range);
+    createButton(pos.x, pos.y, info);
   },
   true
 );

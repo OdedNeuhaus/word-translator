@@ -1,15 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Word Translator (Hebrew)",
-  "version": "1.2.0",
-  "description": "Select a word and translate it to Hebrew.",
+  "version": "1.3.0",
+  "description": "Select a word, phrase, or sentence and translate it to Hebrew.",
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
