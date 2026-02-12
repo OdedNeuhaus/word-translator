@@ -59,6 +59,55 @@ function extractBetweenMarkers(translatedText) {
   return inside || null;
 }
 
+
+
+// --- Context menu (works on PDFs too) ---
+const MENU_ID = "hebrew_translator_translate_selection";
+
+chrome.runtime.onInstalled.addListener(() => {
+  try {
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({
+        id: MENU_ID,
+        title: "Translate to Hebrew",
+        contexts: ["selection"],
+      });
+    });
+  } catch (e) {
+    // ignore (some environments may not allow context menus)
+    console.warn("Failed to create context menu:", e);
+  }
+});
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== MENU_ID) return;
+
+  const selected = String(info.selectionText || "").trim();
+  if (!selected) return;
+
+  try {
+    const translated = await translateToHebrew(selected, "auto");
+
+    chrome.notifications.create({
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: "Hebrew Translation",
+      message: translated,
+      priority: 1,
+    });
+  } catch (e) {
+    chrome.notifications.create({
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: "Translation failed",
+      message: String(e?.message || e),
+      priority: 1,
+    });
+  }
+});
+
+// --- End context menu ---
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
