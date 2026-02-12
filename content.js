@@ -14,6 +14,9 @@ function showBubble(x, y, text) {
   bubbleEl = document.createElement("div");
   bubbleEl.textContent = text;
 
+  // Reset site CSS influence (ChatGPT and others can make text appear invisible)
+  bubbleEl.style.all = "initial";
+
   Object.assign(bubbleEl.style, {
     position: "absolute",
     left: `${x}px`,
@@ -26,10 +29,12 @@ function showBubble(x, y, text) {
     borderRadius: "12px",
     border: "1px solid #ddd",
     background: "white",
+    color: "#111",
     boxShadow: "0 2px 14px rgba(0,0,0,0.18)",
     direction: "rtl",
     whiteSpace: "pre-wrap",
     pointerEvents: "auto",
+    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
   });
 
   document.body.appendChild(bubbleEl);
@@ -137,6 +142,9 @@ function createButton(x, y, info) {
   buttonEl.type = "button";
   buttonEl.textContent = "Translate to Hebrew";
 
+  // Reset site CSS influence
+  buttonEl.style.all = "initial";
+
   Object.assign(buttonEl.style, {
     position: "absolute",
     left: `${x}px`,
@@ -147,11 +155,57 @@ function createButton(x, y, info) {
     borderRadius: "10px",
     border: "1px solid #ccc",
     background: "white",
+    color: "#111",
     cursor: "pointer",
     boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
     userSelect: "none",
     pointerEvents: "auto",
+    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
   });
+
+  function runtimeSendMessageFn() {
+    return globalThis?.chrome?.runtime?.sendMessage;
+  }
+
+  function safeSendMessage(payload, cb) {
+    const sendMessage = runtimeSendMessageFn();
+    if (typeof sendMessage !== "function") {
+      cb({
+        ok: false,
+        error:
+          "Extension API is not available on this page (sendMessage missing). Try refreshing the page or reloading the extension.",
+      });
+      return;
+    }
+
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      cb({ ok: false, error: "Timed out talking to background. Reload the page and try again." });
+    }, 6000);
+
+    try {
+      sendMessage.call(globalThis.chrome.runtime, payload, (resp) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+
+        const lastErr = globalThis?.chrome?.runtime?.lastError;
+        if (lastErr) {
+          cb({ ok: false, error: lastErr.message });
+          return;
+        }
+
+        cb(resp || { ok: false, error: "Empty response from background." });
+      });
+    } catch (e) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      cb({ ok: false, error: String(e?.message || e) });
+    }
+  }
 
   buttonEl.addEventListener(
     "pointerdown",
@@ -173,16 +227,12 @@ function createButton(x, y, info) {
         payload = { type: "TRANSLATE_HE_SELECTION", text: info.text };
       }
 
-      chrome.runtime.sendMessage(payload, (resp) => {
-        if (chrome.runtime.lastError) {
-          showBubble(x, y + 34, `Extension error: ${chrome.runtime.lastError.message}`);
-          return;
-        }
+      safeSendMessage(payload, (resp) => {
         if (!resp?.ok) {
           showBubble(x, y + 34, `Error: ${resp?.error || "unknown"}`);
           return;
         }
-        showBubble(x, y + 34, resp.translated);
+        showBubble(x, y + 34, String(resp.translated || "").trim() || "(no translation)");
       });
     },
     true
